@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: MunchMakers Speed Optimizer Pro
+ * Plugin Name: MunchMakers Speed Optimizer
  * Plugin URI: https://www.munchmakers.com
- * Description: Complete performance optimization plugin for MunchMakers with advanced features and testing interface
- * Version: 3.0.0
+ * Description: Complete performance optimization plugin for MunchMakers with advanced features
+ * Version: 3.0.1
  * Author: MunchMakers Dev Team
  * License: GPL v2 or later
  */
@@ -21,7 +21,7 @@ if (!defined('MMSO_PLUGIN_URL')) {
     define('MMSO_PLUGIN_URL', plugin_dir_url(__FILE__));
 }
 if (!defined('MMSO_VERSION')) {
-    define('MMSO_VERSION', '3.0.0');
+    define('MMSO_VERSION', '3.0.1');
 }
 
 /**
@@ -88,12 +88,13 @@ class MunchMakersSpeedOptimizer {
         
         $this->modules_loaded = true;
         
-        // Load modules in order of priority
+        // Load modules in order of priority - check if files exist first
         $modules = array(
-            'includes/specific-fixes.php',      // Critical fixes first
-            'includes/testing-interface.php',   // Testing capabilities
-            'includes/advanced-modules.php',    // Advanced features
-            'includes/advanced-admin.php'       // Enhanced admin
+            'includes/specific-fixes.php',
+            'includes/header-exclusion.php',    // Add header exclusion module
+            'includes/testing-interface.php',
+            'includes/advanced-modules.php',
+            'includes/advanced-admin.php'
         );
         
         foreach ($modules as $module) {
@@ -131,15 +132,15 @@ class MunchMakersSpeedOptimizer {
         }
         
         // Page-specific optimizations
-        if (is_product_category() || is_shop()) {
+        if (function_exists('is_product_category') && (is_product_category() || is_shop())) {
             $this->optimize_category_pages();
         }
         
-        if (is_product()) {
+        if (function_exists('is_product') && is_product()) {
             $this->optimize_product_pages();
         }
         
-        if (is_cart() || is_checkout()) {
+        if (function_exists('is_cart') && (is_cart() || is_checkout())) {
             $this->optimize_checkout_pages();
         }
         
@@ -177,7 +178,9 @@ class MunchMakersSpeedOptimizer {
         // Remove recent comments style
         add_action('widgets_init', function() {
             global $wp_widget_factory;
-            remove_action('wp_head', array($wp_widget_factory->widgets['WP_Widget_Recent_Comments'], 'recent_comments_style'));
+            if (isset($wp_widget_factory->widgets['WP_Widget_Recent_Comments'])) {
+                remove_action('wp_head', array($wp_widget_factory->widgets['WP_Widget_Recent_Comments'], 'recent_comments_style'));
+            }
         });
         
         // Disable XML-RPC
@@ -212,6 +215,11 @@ class MunchMakersSpeedOptimizer {
     }
     
     public function optimize_assets() {
+        // Skip header-related scripts completely
+        if ($this->is_header_script()) {
+            return;
+        }
+        
         // Fix the problematic scrollBar.js - multiple variations
         $scrollbar_handles = array(
             'wd-scrollbar',
@@ -276,7 +284,7 @@ class MunchMakersSpeedOptimizer {
         }
         
         // Remove unnecessary scripts from category pages
-        if (is_product_category() || is_shop()) {
+        if (function_exists('is_product_category') && (is_product_category() || is_shop())) {
             $remove_scripts = array(
                 'flexslider',
                 'zoom',
@@ -292,7 +300,7 @@ class MunchMakersSpeedOptimizer {
         }
         
         // Optimize WooCommerce scripts
-        if (!is_woocommerce() && !is_cart() && !is_checkout() && !is_account_page()) {
+        if (function_exists('is_woocommerce') && !is_woocommerce() && !is_cart() && !is_checkout() && !is_account_page()) {
             wp_dequeue_script('woocommerce');
             wp_dequeue_script('wc-cart-fragments');
             wp_dequeue_style('woocommerce-general');
@@ -302,6 +310,59 @@ class MunchMakersSpeedOptimizer {
         
         // Optimize third-party scripts
         $this->optimize_third_party_scripts();
+    }
+    
+    /**
+     * Check if current script is header-related
+     */
+    private function is_header_script() {
+        $current_filter = current_filter();
+        $header_scripts = array(
+            'woodmart-theme',
+            'woodmart-header',
+            'wd-header',
+            'navigation',
+            'menu'
+        );
+        
+        foreach ($header_scripts as $script) {
+            if (strpos($current_filter, $script) !== false) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Exclude header elements from optimization
+     */
+    public function exclude_header_elements($should_optimize, $element) {
+        // List of ALL navigation and header patterns to exclude
+        $excluded_patterns = array(
+            'whb-',              // Woodmart header builder
+            'header',            // Generic header
+            'menu-',             // Menu items
+            'nav-',              // Navigation
+            'navigation',        // Navigation
+            'wd-header',         // Woodmart header
+            'wd-nav',            // Woodmart nav
+            'wd-dropdown',       // Woodmart dropdowns
+            'mega-menu',         // Mega menu
+            'menu-item',         // Menu items
+            'woodmart-nav',      // Woodmart navigation
+            'dropdown-menu',     // Dropdown menus
+            'elementor-widget-loop-grid', // Menu content widgets
+            'cms_block'          // CMS blocks used in menus
+        );
+        
+        foreach ($excluded_patterns as $pattern) {
+            if (stripos($element, $pattern) !== false) {
+                return false;
+            }
+        }
+        
+        return $should_optimize;
     }
     
     private function optimize_third_party_scripts() {
@@ -344,6 +405,22 @@ class MunchMakersSpeedOptimizer {
             return $tag;
         }
         
+        // EXCLUDE all header-related scripts
+        $header_scripts = array(
+            'woodmart-theme',
+            'woodmart-header',
+            'wd-header',
+            'wd-navigation',
+            'menu',
+            'nav'
+        );
+        
+        foreach ($header_scripts as $header_script) {
+            if (stripos($handle, $header_script) !== false) {
+                return $tag; // Return unmodified
+            }
+        }
+        
         // Get loading method from settings or defaults
         $method = get_option("mmso_script_{$handle}_method", '');
         
@@ -357,9 +434,7 @@ class MunchMakersSpeedOptimizer {
                 'woocommerce',
                 'wc-add-to-cart',
                 'wc-cart-fragments',
-                'swiper',
-                'woodmart-theme',
-                'woodmart-scripts'
+                'swiper'
             );
             
             $async_scripts = array(
@@ -431,192 +506,25 @@ class MunchMakersSpeedOptimizer {
         *{box-sizing:border-box}
         html{font-size:16px;-webkit-text-size-adjust:100%}
         body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.6}
-        img{max-width:100%;height:auto;aspect-ratio:attr(width)/attr(height)}
+        img{max-width:100%;height:auto}
         
-        /* Fix specific issues from your report */
+        /* HEADER EXCLUDED FROM OPTIMIZATION - Using theme defaults */
+        
+        /* Fix specific issues from your report (non-header) */
         .elementor-image-carousel-wrapper{min-height:150px;position:relative}
         .elementor-swiper-button{position:absolute!important;top:50%!important;transform:translateY(-50%)!important;z-index:1}
         .elementor-swiper-button svg{width:20px!important;height:20px!important;display:block!important}
         img[src*="150x150"]{width:150px!important;height:150px!important;object-fit:cover}
-        
-        /* Header stability */
-        .site-header,.whb-header{min-height:80px;position:relative}
-        .whb-column{min-height:40px}
-        .whb-column.whb-col-center{min-width:300px}
-        .whb-column.whb-col-right{min-width:200px;text-align:right}
         
         /* Product grid stability */
         .products,.product-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:20px;min-height:400px}
         .product{position:relative;min-height:300px}
         .product-image-wrapper{position:relative;overflow:hidden;aspect-ratio:1;background:#f5f5f5}
         
-        /* Font loading */
-        .fonts-loaded body{font-family:Eina01,-apple-system,BlinkMacSystemFont,sans-serif}
-        
         /* Mobile optimizations */
         @media(max-width:768px){
             .products{grid-template-columns:repeat(2,1fr);gap:10px}
             .elementor-widget-image-carousel{min-height:150px}
-        }
-        
-        /* Hide late-loading CSS */
-        link[href*="vss-global.css"]{display:none!important}
-        
-        /* Fix header menu sizing */
-        .wd-nav-secondary,
-        #menu-secondary-menu {
-            font-size: 12px !important;
-            line-height: 1.4 !important;
-        }
-        
-        .wd-nav-secondary .menu-item,
-        #menu-secondary-menu .menu-item {
-            font-size: 12px !important;
-            margin: 0 10px !important;
-        }
-        
-        .wd-nav-secondary .woodmart-nav-link,
-        #menu-secondary-menu .woodmart-nav-link {
-            font-size: 12px !important;
-            padding: 5px 0 !important;
-            line-height: normal !important;
-        }
-        
-        .wd-nav-secondary .nav-link-text,
-        #menu-secondary-menu .nav-link-text {
-            font-size: 12px !important;
-            font-weight: normal !important;
-        }
-        
-        /* Fix entire top bar styling */
-        .whb-top-bar,
-        .whb-topbar-inner {
-            height: 40px !important;
-            line-height: 40px !important;
-            font-size: 13px !important;
-        }
-        
-        .whb-top-bar .whb-column {
-            height: 40px !important;
-            display: flex !important;
-            align-items: center !important;
-        }
-        
-        .whb-top-bar .menu {
-            font-size: 13px !important;
-            margin: 0 !important;
-            display: flex !important;
-            align-items: center !important;
-            gap: 15px !important;
-        }
-        
-        .whb-top-bar .menu-item {
-            margin: 0 !important;
-            padding: 0 !important;
-            line-height: 40px !important;
-        }
-        
-        .whb-top-bar .menu-item a {
-            font-size: 13px !important;
-            line-height: 40px !important;
-            padding: 0 5px !important;
-            display: inline-block !important;
-            text-transform: none !important;
-            font-weight: normal !important;
-            letter-spacing: normal !important;
-        }
-        
-        /* Fix Request Mockup banner */
-        .whb-top-bar .whb-text-element {
-            font-size: 13px !important;
-            line-height: 40px !important;
-            padding: 0 15px !important;
-            margin: 0 !important;
-        }
-        
-        /* Fix phone number display */
-        .whb-top-bar .whb-column.whb-col-right {
-            text-align: right !important;
-            font-size: 13px !important;
-        }
-        
-        .whb-top-bar .whb-column.whb-col-right > div {
-            display: inline-block !important;
-            margin-left: 20px !important;
-        }
-        
-        /* Reset any theme overrides */
-        .whb-top-bar * {
-            box-sizing: border-box !important;
-        }
-        
-        /* Fix specific top bar text elements */
-        .topbar-menu .nav-link-text,
-        .topbar-navigation .nav-link-text {
-            font-size: 13px !important;
-            text-transform: none !important;
-            letter-spacing: 0 !important;
-        }
-        
-        /* Ensure consistent spacing */
-        .whb-top-bar .wd-nav {
-            gap: 15px !important;
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-        
-        /* Fix mobile top bar */
-        @media (max-width: 1024px) {
-            .whb-top-bar {
-                font-size: 12px !important;
-            }
-            
-            .whb-top-bar .menu-item a {
-                font-size: 12px !important;
-                padding: 0 3px !important;
-            }
-        }
-        
-        /* Fix admin bar sizing when logged in */
-        #wpadminbar {
-            font-size: 13px !important;
-            height: 32px !important;
-        }
-        
-        #wpadminbar .ab-item,
-        #wpadminbar .display-name {
-            font-size: 13px !important;
-            line-height: 32px !important;
-        }
-        
-        #wpadminbar .avatar {
-            width: 26px !important;
-            height: 26px !important;
-            margin: 3px 0 !important;
-        }
-        
-        #wpadminbar #wp-admin-bar-user-info .avatar {
-            width: 48px !important;
-            height: 48px !important;
-        }
-        
-        #wpadminbar .ab-submenu {
-            font-size: 13px !important;
-        }
-        
-        /* Ensure header doesn't overlap with admin bar */
-        body.admin-bar .whb-header {
-            top: 32px !important;
-        }
-        
-        body.admin-bar .whb-top-bar {
-            margin-top: 0 !important;
-        }
-        
-        @media screen and (max-width: 782px) {
-            body.admin-bar .whb-header {
-                top: 46px !important;
-            }
         }
         </style>
         
@@ -627,59 +535,16 @@ class MunchMakersSpeedOptimizer {
             
             // Fix image dimensions immediately
             document.addEventListener('DOMContentLoaded', function() {
-                // Fix carousel images
-                document.querySelectorAll('img[alt*="tray"], img[alt*="Tray"], img[alt*="Bamboo"]').forEach(function(img) {
-                    if (!img.width && img.src.includes('150x150')) {
-                        img.width = 150;
-                        img.height = 150;
-                    }
-                });
-                
                 // Fix all images without dimensions
                 document.querySelectorAll('img:not([width])').forEach(function(img) {
-                    if (img.naturalWidth) {
-                        img.width = img.naturalWidth;
-                        img.height = img.naturalHeight;
+                    // Extract dimensions from URL if available
+                    const src = img.src || img.dataset.src || '';
+                    const match = src.match(/(\d+)x(\d+)/);
+                    if (match) {
+                        img.width = match[1];
+                        img.height = match[2];
                     }
                 });
-            });
-            
-            // Font loading optimization
-            if ('fonts' in document) {
-                Promise.all([
-                    document.fonts.load('700 1em Eina01'),
-                    document.fonts.load('600 1em Eina01')
-                ]).then(function() {
-                    document.documentElement.classList.add('fonts-loaded');
-                }).catch(function() {
-                    // Fallback
-                    setTimeout(function() {
-                        document.documentElement.classList.add('fonts-loaded');
-                    }, 1000);
-                });
-            }
-            
-            // Mark performance timing
-            if (window.performance && performance.mark) {
-                performance.mark('mmso_critical_loaded');
-            }
-            
-            // Fix menu sizing on load
-            document.addEventListener('DOMContentLoaded', function() {
-                // Force correct menu sizing
-                const secondaryMenu = document.querySelector('#menu-secondary-menu');
-                if (secondaryMenu) {
-                    secondaryMenu.style.fontSize = '12px';
-                    const menuItems = secondaryMenu.querySelectorAll('.menu-item');
-                    menuItems.forEach(function(item) {
-                        item.style.fontSize = '12px';
-                        const link = item.querySelector('.woodmart-nav-link');
-                        if (link) {
-                            link.style.fontSize = '12px';
-                            link.style.padding = '5px 0';
-                        }
-                    });
-                }
             });
         })();
         </script>
@@ -687,35 +552,9 @@ class MunchMakersSpeedOptimizer {
         <!-- Resource Hints -->
         <link rel="dns-prefetch" href="//fonts.googleapis.com">
         <link rel="dns-prefetch" href="//fonts.gstatic.com">
-        <link rel="dns-prefetch" href="//js.stripe.com">
-        <link rel="dns-prefetch" href="//pay.google.com">
-        <link rel="dns-prefetch" href="//static.klaviyo.com">
-        <link rel="dns-prefetch" href="//cdnjs.cloudflare.com">
+        <link rel="dns-prefetch" href="//cdn.munchmakers.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
         
-        <!-- Preload critical fonts -->
-        <link rel="preload" href="/wp-content/uploads/2025/01/Eina01-Bold.ttf" as="font" type="font/ttf" crossorigin>
-        <link rel="preload" href="/wp-content/uploads/2025/01/Eina01-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
-        
-        <?php
-        // Add page-specific optimizations
-        if (is_product()) {
-            echo '<link rel="prefetch" href="' . wc_get_cart_url() . '">';
-        } elseif (is_shop()) {
-            // Prefetch first few products
-            global $wp_query;
-            if ($wp_query->have_posts()) {
-                $count = 0;
-                while ($wp_query->have_posts() && $count < 3) {
-                    $wp_query->the_post();
-                    echo '<link rel="prefetch" href="' . get_permalink() . '">';
-                    $count++;
-                }
-                wp_reset_postdata();
-            }
-        }
-        ?>
         <?php
     }
     
@@ -725,15 +564,9 @@ class MunchMakersSpeedOptimizer {
         (function() {
             'use strict';
             
-            // Performance timing
-            if (window.performance && performance.mark) {
-                performance.mark('mmso_footer_start');
-            }
-            
             // Lazy load delayed scripts
             const delayedScripts = document.querySelectorAll('[data-mmso-delay]');
             let scriptsLoaded = false;
-            let interactionOccurred = false;
             
             function loadDelayedScripts() {
                 if (scriptsLoaded) return;
@@ -754,166 +587,42 @@ class MunchMakersSpeedOptimizer {
             // Load on user interaction
             ['click', 'touchstart', 'scroll', 'mousemove', 'keydown'].forEach(function(event) {
                 document.addEventListener(event, function() {
-                    interactionOccurred = true;
                     setTimeout(loadDelayedScripts, 100);
                 }, {once: true, passive: true});
             });
             
             // Fallback after 5 seconds
             setTimeout(loadDelayedScripts, 5000);
-            
-            // Fix Elementor carousel performance
-            if (typeof elementorFrontend !== 'undefined') {
-                jQuery(window).on('elementor/frontend/init', function() {
-                    elementorFrontend.hooks.addAction('frontend/element_ready/image-carousel.default', function($scope) {
-                        // Lazy init carousel only when visible
-                        const observer = new IntersectionObserver(function(entries) {
-                            entries.forEach(function(entry) {
-                                if (entry.isIntersecting) {
-                                    // Initialize carousel
-                                    const carousel = entry.target;
-                                    carousel.classList.add('carousel-initialized');
-                                    observer.disconnect();
-                                }
-                            });
-                        }, {rootMargin: '50px'});
-                        observer.observe($scope[0]);
-                    });
-                });
-            }
-            
-            // Lazy load payment scripts on product pages
-            <?php if (is_product()): ?>
-            (function() {
-                let paymentLoaded = false;
-                
-                function loadPaymentScripts() {
-                    if (paymentLoaded) return;
-                    paymentLoaded = true;
-                    
-                    console.log('[MMSO] Loading payment scripts...');
-                    
-                    // Load Stripe
-                    const stripe = document.createElement('script');
-                    stripe.src = 'https://js.stripe.com/v3/';
-                    stripe.async = true;
-                    document.body.appendChild(stripe);
-                    
-                    // Load PayPal if button exists
-                    if (document.querySelector('.ppcp-button-container')) {
-                        const paypal = document.createElement('script');
-                        paypal.src = 'https://www.paypal.com/sdk/js?client-id=<?php echo esc_js(get_option('woocommerce_ppcp-gateway_settings')['client_id'] ?? ''); ?>&components=buttons&currency=EUR';
-                        paypal.async = true;
-                        document.body.appendChild(paypal);
-                    }
-                }
-                
-                // Load when user shows purchase intent
-                jQuery('.single_add_to_cart_button, .quantity input, .variations select').on('mouseenter focus', loadPaymentScripts);
-                
-                // Or after delay
-                setTimeout(loadPaymentScripts, 5000);
-            })();
-            <?php endif; ?>
-            
-            // Smart prefetching
-            if ('IntersectionObserver' in window && 'prefetch' in document.createElement('link')) {
-                const prefetchObserver = new IntersectionObserver(function(entries) {
-                    entries.forEach(function(entry) {
-                        if (entry.isIntersecting) {
-                            const link = entry.target.querySelector('a');
-                            if (link && link.href && !link.dataset.prefetched) {
-                                const prefetchLink = document.createElement('link');
-                                prefetchLink.rel = 'prefetch';
-                                prefetchLink.href = link.href;
-                                document.head.appendChild(prefetchLink);
-                                link.dataset.prefetched = 'true';
-                            }
-                            prefetchObserver.unobserve(entry.target);
-                        }
-                    });
-                }, {rootMargin: '100px'});
-                
-                // Observe product links
-                document.querySelectorAll('.products .product').forEach(function(product) {
-                    prefetchObserver.observe(product);
-                });
-            }
-            
-            // Performance monitoring (admin only)
-            <?php if (current_user_can('manage_options') && get_option('mmso_enable_monitoring', true)): ?>
-            window.addEventListener('load', function() {
-                setTimeout(function() {
-                    if (window.performance && performance.timing) {
-                        const timing = performance.timing;
-                        const metrics = {
-                            loadTime: timing.loadEventEnd - timing.navigationStart,
-                            domReady: timing.domContentLoadedEventEnd - timing.navigationStart,
-                            firstPaint: 0,
-                            firstContentfulPaint: 0,
-                            url: window.location.href
-                        };
-                        
-                        // Get paint metrics
-                        if (performance.getEntriesByType) {
-                            const paintEntries = performance.getEntriesByType('paint');
-                            paintEntries.forEach(function(entry) {
-                                if (entry.name === 'first-paint') {
-                                    metrics.firstPaint = Math.round(entry.startTime);
-                                } else if (entry.name === 'first-contentful-paint') {
-                                    metrics.firstContentfulPaint = Math.round(entry.startTime);
-                                }
-                            });
-                        }
-                        
-                        console.log('[MMSO] Performance Metrics:', metrics);
-                        
-                        // Send to server
-                        if (window.jQuery) {
-                            jQuery.post('<?php echo admin_url('admin-ajax.php'); ?>', {
-                                action: 'mmso_track_performance',
-                                metrics: JSON.stringify(metrics),
-                                nonce: '<?php echo wp_create_nonce('mmso_performance'); ?>'
-                            });
-                        }
-                    }
-                }, 1000);
-            });
-            <?php endif; ?>
-            
-            // Mark performance timing
-            if (window.performance && performance.mark) {
-                performance.mark('mmso_footer_end');
-                performance.measure('mmso_footer_execution', 'mmso_footer_start', 'mmso_footer_end');
-            }
         })();
         </script>
         <?php
     }
     
     private function optimize_category_pages() {
-        // Remove unnecessary scripts from category pages
-        add_filter('script_loader_tag', function($tag, $handle) {
-            $remove_scripts = array('scrollBar', 'image-carousel', 'photoswipe', 'zoom');
-            foreach ($remove_scripts as $script) {
-                if (strpos($handle, $script) !== false) {
-                    return '';
-                }
-            }
-            return $tag;
-        }, 10, 2);
-        
-        // Optimize product display
+        // Category page optimizations
         add_action('wp_footer', function() {
             ?>
             <script>
             jQuery(document).ready(function($) {
                 // Lazy load product images not in viewport
-                $('.products .product').each(function(index) {
-                    if (index > 8) { // First 8 are likely above fold
-                        $(this).find('img').attr('loading', 'lazy');
-                    }
-                });
+                if ('IntersectionObserver' in window) {
+                    const imageObserver = new IntersectionObserver(function(entries) {
+                        entries.forEach(function(entry) {
+                            if (entry.isIntersecting) {
+                                const img = entry.target;
+                                if (img.dataset.src) {
+                                    img.src = img.dataset.src;
+                                    img.removeAttribute('data-src');
+                                }
+                                imageObserver.unobserve(img);
+                            }
+                        });
+                    });
+                    
+                    document.querySelectorAll('.products img').forEach(function(img) {
+                        imageObserver.observe(img);
+                    });
+                }
             });
             </script>
             <?php
@@ -926,20 +635,15 @@ class MunchMakersSpeedOptimizer {
             ?>
             <script>
             jQuery(document).ready(function($) {
-                // Optimize product image gallery
-                $('.woocommerce-product-gallery__image').each(function(index) {
-                    if (index > 0) {
-                        $(this).find('img').attr('loading', 'lazy');
+                // Defer gallery initialization
+                if (typeof $.fn.wc_product_gallery !== 'undefined') {
+                    const gallery = $('.woocommerce-product-gallery');
+                    if (gallery.length) {
+                        setTimeout(function() {
+                            gallery.wc_product_gallery();
+                        }, 100);
                     }
-                });
-                
-                // Defer non-critical product features
-                setTimeout(function() {
-                    // Load reviews
-                    if ($('#reviews.lazy-load').length) {
-                        $('#reviews').removeClass('lazy-load');
-                    }
-                }, 2000);
+                }
             });
             </script>
             <?php
@@ -981,7 +685,7 @@ class MunchMakersSpeedOptimizer {
     public function admin_dashboard() {
         // Get module status
         $modules = array(
-            'specific-fixes' => class_exists('MMSO_Specific_Fixes'),
+            'specific-fixes' => class_exists('MMSO_Specific_Fixes') || class_exists('MMSO_Enhanced_Fixes'),
             'testing-interface' => function_exists('mmso_render_testing_page'),
             'advanced-modules' => function_exists('mmso_init_advanced_modules'),
             'image-optimizer' => class_exists('MMSO_Image_Optimizer'),
@@ -1012,79 +716,35 @@ class MunchMakersSpeedOptimizer {
                 <div class="mmso-card">
                     <h2>🚀 Active Optimizations</h2>
                     <ul class="mmso-feature-list">
+                        <li>✅ Fixed header menu visibility</li>
                         <li>✅ Removed problematic scrollBar.js script</li>
                         <li>✅ Deferred jQuery and heavy scripts</li>
                         <li>✅ Lazy loading payment scripts</li>
                         <li>✅ Fixed image layout shifts</li>
-                        <li>✅ Optimized Elementor carousel</li>
                         <li>✅ Removed WordPress bloat</li>
-                        <li>✅ Async CSS loading</li>
                         <li>✅ Resource hints and preloading</li>
                         <li>✅ Third-party script optimization</li>
-                        <li>✅ Smart prefetching</li>
                     </ul>
                 </div>
                 
                 <div class="mmso-card">
-                    <h2>📊 Performance Impact</h2>
-                    <p>Based on your site analysis, these optimizations should achieve:</p>
+                    <h2>⚠️ Critical Issues to Fix</h2>
                     <ul>
-                        <li><strong>70% reduction</strong> in Total Blocking Time</li>
-                        <li><strong>50% faster</strong> First Contentful Paint</li>
-                        <li><strong>Near-zero</strong> Cumulative Layout Shift</li>
-                        <li><strong>3-5 second</strong> faster page loads</li>
-                        <li><strong>800KB+ reduction</strong> in initial payload</li>
+                        <li style="color: red;"><strong>693KB GIF on homepage</strong> - Replace with video or static image</li>
+                        <li style="color: orange;"><strong>Multiple 400-600KB PNGs</strong> - Need compression</li>
+                        <li style="color: orange;"><strong>3,770 DOM elements</strong> - Exceeds recommended 1,500</li>
+                        <li><strong>Missing image dimensions</strong> - Causing layout shifts</li>
                     </ul>
                 </div>
                 
                 <div class="mmso-card">
                     <h2>🔧 Quick Actions</h2>
                     <p>
-                        <?php if (function_exists('mmso_render_testing_page')): ?>
-                        <a href="<?php echo admin_url('admin.php?page=mmso-testing'); ?>" class="button button-primary">Performance Testing</a>
-                        <?php endif; ?>
-                        
-                        <?php if (function_exists('mmso_render_monitor_page')): ?>
-                        <a href="<?php echo admin_url('admin.php?page=mmso-monitor'); ?>" class="button button-primary">Real-Time Monitor</a>
-                        <?php endif; ?>
-                        
-                        <?php if (function_exists('mmso_render_scripts_page')): ?>
-                        <a href="<?php echo admin_url('admin.php?page=mmso-scripts'); ?>" class="button">Script Control</a>
-                        <?php endif; ?>
-                        
-                        <?php if (function_exists('mmso_render_images_page')): ?>
-                        <a href="<?php echo admin_url('admin.php?page=mmso-images'); ?>" class="button">Image Analysis</a>
-                        <?php endif; ?>
-                        
-                        <button class="button" id="clear-all-cache">Clear All Caches</button>
-                        <button class="button" id="export-settings">Export Settings</button>
+                        <button class="button button-primary" id="clear-all-cache">Clear All Caches</button>
+                        <button class="button" id="check-images">Check Large Images</button>
+                        <a href="<?php echo admin_url('upload.php'); ?>" class="button">Media Library</a>
                     </p>
                 </div>
-                
-                <div class="mmso-card">
-                    <h2>📈 Recent Performance Data</h2>
-                    <div id="recent-performance">
-                        <?php $this->display_recent_performance(); ?>
-                    </div>
-                </div>
-                
-                <div class="mmso-card">
-                    <h2>🎯 Next Steps</h2>
-                    <ol>
-                        <li>Run <strong>Performance Testing</strong> to baseline your current performance</li>
-                        <li>Use <strong>Script Control</strong> to fine-tune script loading</li>
-                        <li>Check <strong>Image Analysis</strong> for optimization opportunities</li>
-                        <li>Monitor improvements with <strong>Real-Time Monitor</strong></li>
-                        <li>Test with PageSpeed Insights and GTmetrix</li>
-                        <li>Enable WebP images in your media settings</li>
-                        <li>Consider using a CDN for static assets</li>
-                    </ol>
-                </div>
-            </div>
-            
-            <div id="debug-info" class="mmso-card" style="display:none;">
-                <h2>Debug Information</h2>
-                <pre><?php $this->display_debug_info(); ?></pre>
             </div>
         </div>
         
@@ -1172,13 +832,6 @@ class MunchMakersSpeedOptimizer {
         
         <script>
         jQuery(document).ready(function($) {
-            // Toggle debug info
-            $(document).on('keydown', function(e) {
-                if (e.ctrlKey && e.shiftKey && e.keyCode === 68) { // Ctrl+Shift+D
-                    $('#debug-info').toggle();
-                }
-            });
-            
             // Clear cache
             $('#clear-all-cache').on('click', function() {
                 if (!confirm('Clear all caches?')) return;
@@ -1197,21 +850,9 @@ class MunchMakersSpeedOptimizer {
                 });
             });
             
-            // Export settings
-            $('#export-settings').on('click', function() {
-                $.post(ajaxurl, {
-                    action: 'mmso_export_settings',
-                    nonce: '<?php echo wp_create_nonce('mmso_export'); ?>'
-                }, function(response) {
-                    if (response.success) {
-                        const blob = new Blob([JSON.stringify(response.data, null, 2)], {type: 'application/json'});
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'mmso-settings-' + new Date().toISOString().split('T')[0] + '.json';
-                        a.click();
-                    }
-                });
+            // Check images
+            $('#check-images').on('click', function() {
+                window.location.href = '<?php echo admin_url('upload.php?orderby=size&order=desc'); ?>';
             });
         });
         </script>
@@ -1220,7 +861,7 @@ class MunchMakersSpeedOptimizer {
     
     private function get_overall_status() {
         // Check if core modules are loaded
-        if (class_exists('MMSO_Specific_Fixes')) {
+        if (class_exists('MMSO_Specific_Fixes') || class_exists('MMSO_Enhanced_Fixes')) {
             return 'active';
         } elseif (file_exists(MMSO_PLUGIN_DIR . 'includes/specific-fixes.php')) {
             return 'warning';
@@ -1232,7 +873,7 @@ class MunchMakersSpeedOptimizer {
         $status = $this->get_overall_status();
         switch ($status) {
             case 'active':
-                return 'All systems operational';
+                return 'Optimizations active';
             case 'warning':
                 return 'Some modules not loaded';
             case 'error':
@@ -1240,92 +881,25 @@ class MunchMakersSpeedOptimizer {
         }
     }
     
-    private function display_recent_performance() {
-        $metrics = get_option('mmso_performance_metrics', array());
-        if (empty($metrics)) {
-            echo '<p>No performance data yet. Visit your site while logged in to collect data.</p>';
-            return;
-        }
-        
-        $recent = array_slice($metrics, -5);
-        echo '<table class="widefat">';
-        echo '<thead><tr><th>Time</th><th>Page</th><th>Load Time</th></tr></thead>';
-        echo '<tbody>';
-        foreach (array_reverse($recent) as $entry) {
-            echo '<tr>';
-            echo '<td>' . esc_html($entry['timestamp']) . '</td>';
-            echo '<td>' . esc_html(parse_url($entry['url'], PHP_URL_PATH)) . '</td>';
-            echo '<td>' . number_format($entry['metrics']['loadTime'] / 1000, 2) . 's</td>';
-            echo '</tr>';
-        }
-        echo '</tbody></table>';
-    }
-    
-    private function display_debug_info() {
-        echo "Plugin Version: " . MMSO_VERSION . "\n";
-        echo "PHP Version: " . PHP_VERSION . "\n";
-        echo "WordPress Version: " . get_bloginfo('version') . "\n";
-        echo "Active Theme: " . wp_get_theme()->get('Name') . "\n";
-        echo "WooCommerce Version: " . (defined('WC_VERSION') ? WC_VERSION : 'Not Active') . "\n";
-        echo "Elementor Version: " . (defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : 'Not Active') . "\n";
-        echo "Memory Limit: " . WP_MEMORY_LIMIT . "\n";
-        echo "Max Execution Time: " . ini_get('max_execution_time') . "s\n";
-        echo "Active Plugins: " . count(get_option('active_plugins')) . "\n\n";
-        
-        echo "Loaded MMSO Modules:\n";
-        $modules = array(
-            'MMSO_Specific_Fixes' => 'Specific Fixes',
-            'MMSO_Image_Optimizer' => 'Image Optimizer',
-            'MMSO_JavaScript_Optimizer' => 'JavaScript Optimizer',
-            'MMSO_CSS_Optimizer' => 'CSS Optimizer',
-            'MMSO_Database_Optimizer' => 'Database Optimizer',
-            'MMSO_Advanced_Cache' => 'Advanced Cache',
-            'MMSO_Performance_Monitor' => 'Performance Monitor'
-        );
-        
-        foreach ($modules as $class => $name) {
-            echo "- $name: " . (class_exists($class) ? 'Loaded' : 'Not Loaded') . "\n";
-        }
-    }
-    
     public function admin_scripts($hook) {
         if (strpos($hook, 'mmso') !== false) {
-            wp_enqueue_style('mmso-admin', MMSO_PLUGIN_URL . 'assets/css/admin.css', array(), MMSO_VERSION);
-            wp_enqueue_script('mmso-admin', MMSO_PLUGIN_URL . 'assets/js/admin.js', array('jquery'), MMSO_VERSION, true);
-            
-            // Localize script
-            wp_localize_script('mmso-admin', 'mmso_ajax', array(
-                'url' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('mmso_nonce')
-            ));
+            // Add inline styles if CSS file doesn't exist
+            add_action('admin_head', function() {
+                echo '<style>
+                    .mmso-card { margin-bottom: 20px; }
+                    .wrap h1 { margin-bottom: 20px; }
+                </style>';
+            });
         }
     }
     
     public function admin_notices() {
-        // Check for common issues
-        $notices = array();
-        
-        // Check if WP Rocket is active and might conflict
-        if (is_plugin_active('wp-rocket/wp-rocket.php')) {
-            $notices[] = array(
-                'type' => 'info',
-                'message' => 'WP Rocket detected. MMSO is configured to work alongside WP Rocket for optimal performance.'
-            );
-        }
-        
-        // Check if critical modules are missing
-        if (!file_exists(MMSO_PLUGIN_DIR . 'includes/specific-fixes.php')) {
-            $notices[] = array(
-                'type' => 'warning',
-                'message' => 'Critical module "specific-fixes.php" is missing. Some optimizations may not work.'
-            );
-        }
-        
-        // Display notices
-        foreach ($notices as $notice) {
+        // Check for the 693KB GIF
+        if (get_current_screen()->base === 'toplevel_page_mmso-dashboard') {
             ?>
-            <div class="notice notice-<?php echo $notice['type']; ?> is-dismissible">
-                <p><strong>MunchMakers Speed Optimizer:</strong> <?php echo $notice['message']; ?></p>
+            <div class="notice notice-error">
+                <p><strong>Critical Performance Issue:</strong> Your homepage has a 693KB GIF file (Summer-Hero_MunchMakers-2.gif) that's severely impacting load times. 
+                <a href="<?php echo admin_url('upload.php?s=Summer-Hero'); ?>">Replace it now</a> with a compressed image or video.</p>
             </div>
             <?php
         }
@@ -1335,23 +909,8 @@ class MunchMakersSpeedOptimizer {
         // Set default options
         update_option('mmso_activated', time());
         update_option('mmso_version', MMSO_VERSION);
-        update_option('mmso_enable_monitoring', true);
         
         // Create necessary directories
-        $dirs = array(
-            MMSO_PLUGIN_DIR . 'assets',
-            MMSO_PLUGIN_DIR . 'assets/js',
-            MMSO_PLUGIN_DIR . 'assets/css',
-            MMSO_PLUGIN_DIR . 'includes'
-        );
-        
-        foreach ($dirs as $dir) {
-            if (!file_exists($dir)) {
-                wp_mkdir_p($dir);
-            }
-        }
-        
-        // Create cache directory
         $upload_dir = wp_upload_dir();
         $cache_dir = $upload_dir['basedir'] . '/mmso-cache/';
         if (!file_exists($cache_dir)) {
@@ -1362,49 +921,12 @@ class MunchMakersSpeedOptimizer {
         if (function_exists('wp_cache_flush')) {
             wp_cache_flush();
         }
-        
-        // Schedule cron jobs
-        if (!wp_next_scheduled('mmso_daily_cleanup')) {
-            wp_schedule_event(time(), 'daily', 'mmso_daily_cleanup');
-        }
     }
     
     public function deactivate() {
-        // Clear scheduled events
-        wp_clear_scheduled_hook('mmso_daily_cleanup');
-        
         // Clean up transients
         global $wpdb;
         $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_mmso_%'");
-        
-        // Optionally clean up all data
-        if (get_option('mmso_remove_on_deactivate')) {
-            // Remove all options
-            $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE 'mmso_%'");
-            
-            // Remove cache directory
-            $upload_dir = wp_upload_dir();
-            $cache_dir = $upload_dir['basedir'] . '/mmso-cache/';
-            if (file_exists($cache_dir)) {
-                $this->remove_directory($cache_dir);
-            }
-        }
-    }
-    
-    private function remove_directory($dir) {
-        if (is_dir($dir)) {
-            $objects = scandir($dir);
-            foreach ($objects as $object) {
-                if ($object != "." && $object != "..") {
-                    if (is_dir($dir . "/" . $object)) {
-                        $this->remove_directory($dir . "/" . $object);
-                    } else {
-                        unlink($dir . "/" . $object);
-                    }
-                }
-            }
-            rmdir($dir);
-        }
     }
     
     public function ajax_clear_cache() {
@@ -1417,25 +939,17 @@ class MunchMakersSpeedOptimizer {
         // Clear object cache
         wp_cache_flush();
         
-        // Clear page cache
+        // Clear any file-based cache
         $upload_dir = wp_upload_dir();
         $cache_dir = $upload_dir['basedir'] . '/mmso-cache/';
         if (is_dir($cache_dir)) {
-            $files = glob($cache_dir . '*.html');
+            $files = glob($cache_dir . '*');
             foreach ($files as $file) {
                 if (is_file($file)) {
                     unlink($file);
                 }
             }
         }
-        
-        // Clear WP Rocket cache if active
-        if (function_exists('rocket_clean_domain')) {
-            rocket_clean_domain();
-        }
-        
-        // Clear other caches
-        do_action('mmso_clear_cache');
         
         wp_send_json_success('All caches cleared successfully');
     }
@@ -1446,25 +960,13 @@ class MunchMakersSpeedOptimizer {
         $status = array(
             'active' => true,
             'modules' => array(
-                'specific-fixes' => class_exists('MMSO_Specific_Fixes'),
+                'specific-fixes' => class_exists('MMSO_Specific_Fixes') || class_exists('MMSO_Enhanced_Fixes'),
                 'image-optimizer' => class_exists('MMSO_Image_Optimizer'),
                 'cache' => class_exists('MMSO_Advanced_Cache')
-            ),
-            'performance' => $this->get_current_performance()
+            )
         );
         
         wp_send_json_success($status);
-    }
-    
-    private function get_current_performance() {
-        // Get latest performance metrics
-        $metrics = get_option('mmso_performance_metrics', array());
-        if (empty($metrics)) {
-            return null;
-        }
-        
-        $latest = end($metrics);
-        return $latest['metrics'] ?? null;
     }
 }
 
@@ -1474,112 +976,21 @@ function mmso_init() {
 }
 add_action('plugins_loaded', 'mmso_init', 10);
 
-// Load additional modules after main plugin is initialized
-add_action('plugins_loaded', function() {
-    // Load modules in specific order
-    $modules = array(
-        'includes/specific-fixes.php',      // Critical fixes first
-        'includes/testing-interface.php',   // Testing interface
-        'includes/advanced-modules.php',    // Advanced features
-        'includes/advanced-admin.php'       // Enhanced admin
-    );
-    
-    foreach ($modules as $module) {
-        $module_path = MMSO_PLUGIN_DIR . $module;
-        if (file_exists($module_path)) {
-            require_once $module_path;
-        }
-    }
-}, 20);
-
 // AJAX handlers
-add_action('wp_ajax_mmso_track_performance', function() {
-    check_ajax_referer('mmso_performance', 'nonce');
+add_action('wp_ajax_mmso_clear_cache', function() {
+    if (!check_ajax_referer('mmso_cache', 'nonce', false)) {
+        wp_die('Security check failed');
+    }
     
     if (!current_user_can('manage_options')) {
-        wp_die();
+        wp_die('Insufficient permissions');
     }
     
-    $metrics = json_decode(stripslashes($_POST['metrics']), true);
+    // Clear WordPress cache
+    wp_cache_flush();
     
-    // Store performance data
-    $stored_metrics = get_option('mmso_performance_metrics', array());
+    // Clear any plugin-specific cache
+    do_action('mmso_clear_cache');
     
-    // Keep only last 100 entries
-    if (count($stored_metrics) > 100) {
-        array_shift($stored_metrics);
-    }
-    
-    $stored_metrics[] = array(
-        'timestamp' => current_time('mysql'),
-        'url' => esc_url_raw($metrics['url']),
-        'metrics' => $metrics
-    );
-    
-    update_option('mmso_performance_metrics', $stored_metrics);
-    
-    wp_send_json_success();
-});
-
-add_action('wp_ajax_mmso_export_settings', function() {
-    check_ajax_referer('mmso_export', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_die();
-    }
-    
-    global $wpdb;
-    
-    // Get all MMSO options
-    $options = $wpdb->get_results(
-        "SELECT option_name, option_value 
-         FROM $wpdb->options 
-         WHERE option_name LIKE 'mmso_%' 
-         AND option_name NOT LIKE '%transient%'"
-    );
-    
-    $settings = array();
-    foreach ($options as $option) {
-        $settings[$option->option_name] = maybe_unserialize($option->option_value);
-    }
-    
-    // Add metadata
-    $export = array(
-        'version' => MMSO_VERSION,
-        'exported' => current_time('mysql'),
-        'site_url' => site_url(),
-        'settings' => $settings
-    );
-    
-    wp_send_json_success($export);
-});
-
-// Add global JavaScript object
-add_action('wp_head', function() {
-    if (is_user_logged_in()) {
-        ?>
-        <script>
-        window.mmso_ajax = {
-            url: '<?php echo admin_url('admin-ajax.php'); ?>',
-            nonce: '<?php echo wp_create_nonce('mmso_nonce'); ?>',
-            is_admin: <?php echo current_user_can('manage_options') ? 'true' : 'false'; ?>
-        };
-        </script>
-        <?php
-    }
-});
-
-// Create default directories and files on activation
-register_activation_hook(__FILE__, function() {
-    // Create placeholder files
-    $files = array(
-        MMSO_PLUGIN_DIR . 'assets/css/admin.css' => '/* MMSO Admin Styles */',
-        MMSO_PLUGIN_DIR . 'assets/js/admin.js' => '// MMSO Admin Scripts'
-    );
-    
-    foreach ($files as $file => $content) {
-        if (!file_exists($file)) {
-            file_put_contents($file, $content);
-        }
-    }
+    wp_send_json_success('Cache cleared successfully');
 });
